@@ -13,7 +13,7 @@ PROGRAMS=\
         danetest heartbeat_test p5_crpt2_test \
         constant_time_test verify_extra_test clienthellotest \
         packettest asynctest secmemtest srptest memleaktest \
-        dtlsv1listentest
+        dtlsv1listentest ct_test sct_test sct_test.sh
 
 SOURCE[nptest]=nptest.c
 INCLUDE[nptest]={- rel2abs(catdir($builddir,"../include")) -} ../include
@@ -206,3 +206,11 @@ DEPEND[memleaktest]=../libcrypto
 SOURCE[dtlsv1listentest]=dtlsv1listentest.c
 INCLUDE[dtlsv1listentest]={- rel2abs(catdir($builddir,"../include")) -} .. ../include
 DEPEND[dtlsv1listentest]=../libssl
+
+SOURCE[sct_test]=sct_test.c
+INCLUDE[sct_test]={- rel2abs(catdir($builddir,"../include")) -} .. ../include
+DEPEND[sct_test]=../libcrypto
+
+
+
+
