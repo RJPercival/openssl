@@ -67,6 +67,13 @@
 
 #include "internal/ct_int.h"
 
+static const CTLOG_STORE *v3_ct_logs = NULL;
+
+void CT_X509_set0_ctlog_store(const CTLOG_STORE *logs)
+{
+    v3_ct_logs = logs;
+}
+
 static char *i2s_poison(const X509V3_EXT_METHOD *method, void *val)
 {
     return OPENSSL_strdup("NULL");
@@ -75,6 +82,11 @@ static char *i2s_poison(const X509V3_EXT_METHOD *method, void *val)
 static int i2r_SCT_LIST(X509V3_EXT_METHOD *method, STACK_OF(SCT) *sct_list,
                  BIO *out, int indent)
 {
+    const CTLOG_STORE* ct_logs = *(const CTLOG_STORE**)method->usr_data;
+
+    if (ct_logs != NULL)
+        SCT_LIST_set0_logs(sct_list, ct_logs);
+
     SCT_LIST_print(sct_list, out, indent, "\n");
     return 1;
 }
@@ -88,7 +100,7 @@ const X509V3_EXT_METHOD v3_ct_scts[] = {
     NULL, NULL,
     NULL, NULL,
     (X509V3_EXT_I2R)i2r_SCT_LIST, NULL,
-    NULL },
+    &v3_ct_logs },
 
     /* X509v3 extension to mark a certificate as a pre-certificate */
     { NID_ct_precert_poison, 0, ASN1_ITEM_ref(ASN1_NULL),
@@ -96,7 +108,7 @@ const X509V3_EXT_METHOD v3_ct_scts[] = {
     i2s_poison, NULL,
     NULL, NULL,
     NULL, NULL,
-    NULL },
+    &v3_ct_logs },
 
     /* OCSP extension that contains SCTs */
     { NID_ct_cert_scts, 0, NULL,
@@ -105,5 +117,6 @@ const X509V3_EXT_METHOD v3_ct_scts[] = {
     NULL, NULL,
     NULL, NULL,
     (X509V3_EXT_I2R)i2r_SCT_LIST, NULL,
-    NULL },
+    &v3_ct_logs },
 };
+

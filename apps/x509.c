@@ -74,6 +74,9 @@
 #ifndef OPENSSL_NO_DSA
 # include <openssl/dsa.h>
 #endif
+#ifndef OPENSSL_NO_CT
+# include <openssl/ct.h>
+#endif
 
 #undef POSTFIX
 #define POSTFIX ".srl"
@@ -225,6 +228,12 @@ int x509_main(int argc, char **argv)
     ENGINE *e = NULL;
 #ifndef OPENSSL_NO_MD5
     int subject_hash_old = 0, issuer_hash_old = 0;
+#endif
+#ifndef OPENSSL_NO_CT
+    CTLOG_STORE *ctlog_store = CTLOG_STORE_new();
+
+    CTLOG_STORE_load_default_file(ctlog_store);
+    CT_X509_set0_ctlog_store(ctlog_store);
 #endif
 
     ctx = X509_STORE_new();
