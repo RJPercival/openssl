@@ -67,10 +67,11 @@
 
 static void SCT_signature_algorithms_print(const SCT *sct, BIO *out)
 {
-    int nid = SCT_get_signature_nid(sct);
+    int nid = CT_SIGNATURE_get_nid(sct->signature);
 
     if (nid == NID_undef)
-        BIO_printf(out, "%02X%02X", sct->hash_alg, sct->sig_alg);
+        BIO_printf(out, "%02X%02X", sct->signature->hash_alg,
+                   sct->signature->sig_alg);
     else
         BIO_printf(out, "%s", OBJ_nid2ln(nid));
 }
@@ -127,7 +128,8 @@ void SCT_print(const SCT *sct, BIO *out, int indent)
     BIO_printf(out, "\n%*sSignature : ", indent + 4, "");
     SCT_signature_algorithms_print(sct, out);
     BIO_printf(out, "\n%*s            ", indent + 4, "");
-    BIO_hex_string(out, indent + 16, 16, sct->sig, sct->sig_len);
+    BIO_hex_string(out, indent + 16, 16, sct->signature->value,
+                   sct->signature->len);
 }
 
 void SCT_LIST_print(const STACK_OF(SCT) *sct_list, BIO *out, int indent,

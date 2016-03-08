@@ -62,11 +62,24 @@
 #include <openssl/safestack.h>
 
 /*
- * From RFC6962: opaque SerializedSCT<1..2^16-1>; struct { SerializedSCT
- * sct_list <1..2^16-1>; } SignedCertificateTimestampList;
+ * From RFC5246:
+ *
+ * struct {
+ *   SignatureAndHashAlgorithm algorithm;
+ *   opaque signature<0..2^16-1>;
+ * } DigitallySigned;
+ *
+ * From RFC6962:
+ *
+ * opaque SerializedSCT<1..2^16-1>;
+ *
+ * struct {
+ *   SerializedSCT sct_list <1..2^16-1>;
+ * } SignedCertificateTimestampList;
  */
-# define MAX_SCT_SIZE            65535
-# define MAX_SCT_LIST_SIZE       MAX_SCT_SIZE
+#define MAX_CT_SIGNATURE_SIZE   2+65535
+#define MAX_SCT_SIZE            65535
+#define MAX_SCT_LIST_SIZE       MAX_SCT_SIZE
 
 /*
  * Macros to read and write integers in network-byte order.
@@ -100,6 +113,14 @@
                          *((c)++)=(unsigned char)(((l)>> 8)&0xff), \
                          *((c)++)=(unsigned char)(((l)    )&0xff))
 
+/* Certificate Transparency signature */
+struct ct_signature_st {
+    unsigned char hash_alg; /* Hash algorithm, e.g. TLSEXT_hash_sha256 */
+    unsigned char sig_alg; /* Signature algorithm, e.g. TLSEXT_signature_rsa */
+    unsigned char *value; /* Signature */
+    size_t len; /* Signature length */
+};
+
 /* Signed Certificate Timestamp */
 struct sct_st {
     sct_version_t version;
@@ -117,10 +138,7 @@ struct sct_st {
     uint64_t timestamp;
     unsigned char *ext;
     size_t ext_len;
-    unsigned char hash_alg;
-    unsigned char sig_alg;
-    unsigned char *sig;
-    size_t sig_len;
+    CT_SIGNATURE *signature;
     /* Log entry type */
     ct_log_entry_type_t entry_type;
     /* Where this SCT was found, e.g. certificate, OCSP response, etc. */
@@ -204,11 +222,11 @@ __owur int SCT_CTX_set1_pubkey(SCT_CTX *sctx, X509_PUBKEY *pubkey);
 __owur int SCT_is_complete(const SCT *sct);
 
 /*
- * Does this SCT have the signature-related fields populated?
+ * Does this signature have all of its fields populated?
  * Returns 1 if so, 0 otherwise.
  * This checks that the signature and hash algorithms are set to supported
  * values and that the signature field is set.
  */
-__owur int SCT_signature_is_complete(const SCT *sct);
+__owur int ct_signature_is_complete(const CT_SIGNATURE *sig);
 
 

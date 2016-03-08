@@ -89,7 +89,7 @@ void SCT_free(SCT *sct)
 
     OPENSSL_free(sct->log_id);
     OPENSSL_free(sct->ext);
-    OPENSSL_free(sct->sig);
+    CT_SIGNATURE_free(sct->signature);
     OPENSSL_free(sct->sct);
     OPENSSL_free(sct);
 }
@@ -158,21 +158,15 @@ void SCT_set_timestamp(SCT *sct, uint64_t timestamp)
     sct->timestamp = timestamp;
 }
 
-int SCT_set_signature_nid(SCT *sct, int nid)
+const CT_SIGNATURE *SCT_get0_signature(const SCT *sct)
 {
-  switch (nid) {
-    case NID_sha256WithRSAEncryption:
-        sct->hash_alg = TLSEXT_hash_sha256;
-        sct->sig_alg = TLSEXT_signature_rsa;
-        return 1;
-    case NID_ecdsa_with_SHA256:
-        sct->hash_alg = TLSEXT_hash_sha256;
-        sct->sig_alg = TLSEXT_signature_ecdsa;
-        return 1;
-    default:
-        CTerr(CT_F_SCT_SET_SIGNATURE_NID, CT_R_UNRECOGNIZED_SIGNATURE_NID);
-        return 0;
-    }
+    return sct->signature;
+}
+
+void SCT_set0_signature(SCT *sct, CT_SIGNATURE *sig)
+{
+    CT_SIGNATURE_free(sct->signature);
+    sct->signature = sig;
 }
 
 void SCT_set0_extensions(SCT *sct, unsigned char *ext, size_t ext_len)
@@ -195,30 +189,6 @@ int SCT_set1_extensions(SCT *sct, const unsigned char *ext, size_t ext_len)
             return 0;
         }
         sct->ext_len = ext_len;
-    }
-    return 1;
-}
-
-void SCT_set0_signature(SCT *sct, unsigned char *sig, size_t sig_len)
-{
-    OPENSSL_free(sct->sig);
-    sct->sig = sig;
-    sct->sig_len = sig_len;
-}
-
-int SCT_set1_signature(SCT *sct, const unsigned char *sig, size_t sig_len)
-{
-    OPENSSL_free(sct->sig);
-    sct->sig = NULL;
-    sct->sig_len = 0;
-
-    if (sig != NULL && sig_len > 0) {
-        sct->sig = OPENSSL_memdup(sig, sig_len);
-        if (sct->sig == NULL) {
-            CTerr(CT_F_SCT_SET1_SIGNATURE, ERR_R_MALLOC_FAILURE);
-            return 0;
-        }
-        sct->sig_len = sig_len;
     }
     return 1;
 }
@@ -249,33 +219,10 @@ uint64_t SCT_get_timestamp(const SCT *sct)
     return sct->timestamp;
 }
 
-int SCT_get_signature_nid(const SCT *sct)
-{
-    if (sct->version == SCT_VERSION_V1) {
-        if (sct->hash_alg == TLSEXT_hash_sha256) {
-            switch (sct->sig_alg) {
-            case TLSEXT_signature_ecdsa:
-                return NID_ecdsa_with_SHA256;
-            case TLSEXT_signature_rsa:
-                return NID_sha256WithRSAEncryption;
-            default:
-                return NID_undef;
-            }
-        }
-    }
-    return NID_undef;
-}
-
 size_t SCT_get0_extensions(const SCT *sct, unsigned char **ext)
 {
     *ext = sct->ext;
     return sct->ext_len;
-}
-
-size_t SCT_get0_signature(const SCT *sct, unsigned char **sig)
-{
-    *sig = sct->sig;
-    return sct->sig_len;
 }
 
 int SCT_is_complete(const SCT *sct)
@@ -284,16 +231,10 @@ int SCT_is_complete(const SCT *sct)
     case SCT_VERSION_NOT_SET:
         return 0;
     case SCT_VERSION_V1:
-        return sct->log_id != NULL && SCT_signature_is_complete(sct);
+        return sct->log_id != NULL && ct_signature_is_complete(sct->signature);
     default:
         return sct->sct != NULL; /* Just need cached encoding */
     }
-}
-
-int SCT_signature_is_complete(const SCT *sct)
-{
-    return SCT_get_signature_nid(sct) != NID_undef &&
-        sct->sig != NULL && sct->sig_len > 0;
 }
 
 sct_source_t SCT_get_source(const SCT *sct)

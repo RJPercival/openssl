@@ -109,6 +109,7 @@ SCT *SCT_new_from_base64(unsigned char version, const char *logid_base64,
     SCT *sct = SCT_new();
     unsigned char *dec = NULL;
     int declen;
+    CT_SIGNATURE *sig = NULL;
 
     if (sct == NULL) {
         CTerr(CT_F_SCT_NEW_FROM_BASE64, ERR_R_MALLOC_FAILURE);
@@ -146,8 +147,10 @@ SCT *SCT_new_from_base64(unsigned char version, const char *logid_base64,
         CTerr(CT_F_SCT_NEW_FROM_BASE64, X509_R_BASE64_DECODE_ERROR);
         goto err;
     }
-    if (o2i_SCT_signature(sct, (const unsigned char **)&dec, declen) <= 0)
+
+    if (o2i_CT_signature(&sig, (const unsigned char **)&dec, declen) == NULL)
         goto err;
+    SCT_set0_signature(sct, sig);
     OPENSSL_free(dec);
     dec = NULL;
 
@@ -161,6 +164,7 @@ SCT *SCT_new_from_base64(unsigned char version, const char *logid_base64,
  err:
     OPENSSL_free(dec);
     SCT_free(sct);
+    CT_SIGNATURE_free(sig);
     return NULL;
 }
 

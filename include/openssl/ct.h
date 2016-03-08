@@ -146,6 +146,51 @@ int CT_verify_no_bad_scts(const CT_POLICY_EVAL_CTX *ctx,
 int CT_verify_at_least_one_good_sct(const CT_POLICY_EVAL_CTX *ctx,
                                     const STACK_OF(SCT) *scts, void *arg);
 
+/***********************
+ * Signature functions *
+ ***********************/
+
+/*
+ * Creates a new, empty signature.
+ * The caller is responsible for calling CT_SIGNATURE_free when finished with
+ * the signature.
+ */
+CT_SIGNATURE *CT_SIGNATURE_new(void);
+
+/*
+ * Frees the signature and its value field.
+ */
+void CT_SIGNATURE_free(CT_SIGNATURE *sig);
+
+/*
+ * Return the NID (hash and signature algorithms) for the signature.
+ * For CT v1, this will be either NID_sha256WithRSAEncryption or
+ * NID_ecdsa_with_SHA256 (or NID_undef if incorrect/unset).
+ */
+int CT_SIGNATURE_get_nid(const CT_SIGNATURE *sig);
+
+/*
+ * Sets *value to point at the signature.
+ * The signature retains ownership of this data.
+ * Returns the length of the signature data.
+ */
+__owur size_t CT_SIGNATURE_get0_value(const CT_SIGNATURE *sig,
+                                      const unsigned char **value);
+
+/*
+ * Set |sig| to have the given |value|.
+ * A copy is made of |value|, so ownership is not transferred.
+ * Returns 1 on success, 0 otherwise.
+ */
+__owur int CT_SIGNATURE_set1_value(CT_SIGNATURE *sig,
+                                   const unsigned char *value, size_t len);
+
+/*
+ * Set |sig| to have the hash and signature algorithms specified by |nid|.
+ * Returns 1 on success, 0 otherwise.
+ */
+__owur int CT_SIGNATURE_set_nid(CT_SIGNATURE *sig, int nid);
+
 /*****************
  * SCT functions *
  *****************/
@@ -240,19 +285,14 @@ uint64_t SCT_get_timestamp(const SCT *sct);
 void SCT_set_timestamp(SCT *sct, uint64_t timestamp);
 
 /*
- * Return the NID for the signature used by the SCT.
- * For CT v1, this will be either NID_sha256WithRSAEncryption or
- * NID_ecdsa_with_SHA256 (or NID_undef if incorrect/unset).
+ * Returns the signature from the SCT.
  */
-int SCT_get_signature_nid(const SCT *sct);
+const CT_SIGNATURE* SCT_get0_signature(const SCT *sct);
 
 /*
- * Set the signature type of an SCT
- * For CT v1, this should be either NID_sha256WithRSAEncryption or
- * NID_ecdsa_with_SHA256.
- * Returns 1 on success, 0 otherwise.
+ * Sets the signature for the SCT.
  */
-__owur int SCT_set_signature_nid(SCT *sct, int nid);
+void SCT_set0_signature(SCT *sct, CT_SIGNATURE *sig);
 
 /*
  * Set *ext to point to the extension data for the SCT. ext must not be NULL.
@@ -274,26 +314,6 @@ void SCT_set0_extensions(SCT *sct, unsigned char *ext, size_t ext_len);
  */
 __owur int SCT_set1_extensions(SCT *sct, const unsigned char *ext,
                                size_t ext_len);
-
-/*
- * Set *sig to point to the signature for the SCT. sig must not be NULL.
- * The SCT retains ownership of this pointer.
- * Returns length of the data pointed to.
- */
-size_t SCT_get0_signature(const SCT *sct, unsigned char **sig);
-
-/*
- * Set the signature of an SCT to point directly to the *sig specified.
- * The SCT takes ownership of the specified pointer.
- */
-void SCT_set0_signature(SCT *sct, unsigned char *sig, size_t sig_len);
-
-/*
- * Set the signature of an SCT to be a copy of the *sig specified.
- * Returns 1 on success, 0 otherwise.
- */
-__owur int SCT_set1_signature(SCT *sct, const unsigned char *sig,
-                              size_t sig_len);
 
 /*
  * The origin of this SCT, e.g. TLS extension, OCSP response, etc.
@@ -456,7 +476,7 @@ __owur int i2o_SCT(const SCT *sct, unsigned char **out);
 /*
  * Parses an SCT in TLS format and returns it.
  * If |psct| is not null, it will end up pointing to the parsed SCT. If it
- * already points to a non-null pointer, the pointer will be free'd.
+ * already points to a non-null pointer, the pointer will be freed.
  * |in| should be a pointer to a string contianing the TLS-format SCT.
  * |in| will be advanced to the end of the SCT if parsing succeeds.
  * |len| should be the length of the SCT in |in|.
@@ -467,23 +487,26 @@ __owur int i2o_SCT(const SCT *sct, unsigned char **out);
 SCT *o2i_SCT(SCT **psct, const unsigned char **in, size_t len);
 
 /*
-* Serialize (to TLS format) an |sct| signature and write it to |out|.
+* Serialize (to TLS format) a CT signature and write it to |out|.
 * If |out| is null, no signature will be output but the length will be returned.
 * If |out| points to a null pointer, a string will be allocated to hold the
 * TLS-format signature. It is the responsibility of the caller to free it.
 * If |out| points to an allocated string, the signature will be written to it.
 * The length of the signature in TLS format will be returned.
 */
-__owur int i2o_SCT_signature(const SCT *sct, unsigned char **out);
+__owur int i2o_CT_signature(const CT_SIGNATURE *sig, unsigned char **out);
 
 /*
-* Parses an SCT signature in TLS format and populates the |sct| with it.
-* |in| should be a pointer to a string contianing the TLS-format signature.
+* Parses a CT signature in TLS format and returns it.
+* If |sig| is not null, it will end up pointing to the parsed signature. If it
+* already points to a non-null pointer, the pointer will be freed.
+* |in| should be a pointer to a string contaning the TLS-format signature.
 * |in| will be advanced to the end of the signature if parsing succeeds.
 * |len| should be the length of the signature in |in|.
-* Returns the number of bytes parsed, or a negative integer if an error occurs.
+* Returns NULL if an error occurs.
 */
-__owur int o2i_SCT_signature(SCT *sct, const unsigned char **in, size_t len);
+CT_SIGNATURE *o2i_CT_signature(CT_SIGNATURE **sig, const unsigned char **in,
+                               size_t len);
 
 /********************
  * CT log functions *
@@ -582,14 +605,19 @@ void ERR_load_CT_strings(void);
 # define CT_F_CT_POLICY_EVAL_CTX_SET0_CERT                134
 # define CT_F_CT_POLICY_EVAL_CTX_SET0_ISSUER              135
 # define CT_F_CT_POLICY_EVAL_CTX_SET0_LOG_STORE           136
+# define CT_F_CT_SIGNATURE_NEW                            141
+# define CT_F_CT_SIGNATURE_SET1_VALUE                     142
+# define CT_F_CT_SIGNATURE_SET_NID                        143
 # define CT_F_CT_V1_LOG_ID_FROM_PKEY                      125
 # define CT_F_CT_VERIFY_AT_LEAST_ONE_GOOD_SCT             137
 # define CT_F_CT_VERIFY_NO_BAD_SCTS                       138
 # define CT_F_D2I_SCT_LIST                                105
 # define CT_F_I2D_SCT_LIST                                106
+# define CT_F_I2O_CT_SIGNATURE                            144
 # define CT_F_I2O_SCT                                     107
 # define CT_F_I2O_SCT_LIST                                108
 # define CT_F_I2O_SCT_SIGNATURE                           109
+# define CT_F_O2I_CT_SIGNATURE                            145
 # define CT_F_O2I_SCT                                     110
 # define CT_F_O2I_SCT_LIST                                111
 # define CT_F_O2I_SCT_SIGNATURE                           112
@@ -612,6 +640,7 @@ void ERR_load_CT_strings(void);
 /* Reason codes. */
 # define CT_R_BASE64_DECODE_ERROR                         108
 # define CT_R_INVALID_LOG_ID_LENGTH                       100
+# define CT_R_INVALID_SIGNATURE                           118
 # define CT_R_LOG_CONF_INVALID                            109
 # define CT_R_LOG_CONF_INVALID_KEY                        110
 # define CT_R_LOG_CONF_MISSING_DESCRIPTION                111
