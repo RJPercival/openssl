@@ -145,7 +145,7 @@ static int certify(X509 **xret, char *infile, EVP_PKEY *pkey, X509 *x509,
                    int multirdn, int email_dn, char *startdate, char *enddate,
                    long days, int batch, char *ext_sect, CONF *conf,
                    int verbose, unsigned long certopt, unsigned long nameopt,
-                   int default_op, int ext_copy, int selfsign);
+                   int default_op, int ext_copy, int selfsign, int precert);
 static int certify_cert(X509 **xret, char *infile, EVP_PKEY *pkey, X509 *x509,
                         const EVP_MD *dgst, STACK_OF(OPENSSL_STRING) *sigopts,
                         STACK_OF(CONF_VALUE) *policy, CA_DB *db,
@@ -172,7 +172,7 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
                    int email_dn, char *startdate, char *enddate, long days,
                    int batch, int verbose, X509_REQ *req, char *ext_sect,
                    CONF *conf, unsigned long certopt, unsigned long nameopt,
-                   int default_op, int ext_copy, int selfsign);
+                   int default_op, int ext_copy, int selfsign, int precert);
 static int do_revoke(X509 *x509, CA_DB *db, int ext, char *extval);
 static int get_certificate_status(const char *ser_status, CA_DB *db);
 static int do_updatedb(CA_DB *db);
@@ -223,13 +223,14 @@ static int check_for_dup(CA_DB *db, BIGNUM *serial);
  * *xret will point to the new certificate if successful.
  * If verbose, logging will be printed.
  * If selfsign, the certificate will be self-signed.
+ * If precert, the certificate will have a poison extension (see RFC 6962).
  * Returns 1 on success, 0 otherwise.
  */
 static int create_cert(X509 **xret, X509 *issuer, BIGNUM *serial, int email_dn,
                        X509_NAME *subject,
                        const char *startdate, const char *enddate, long days,
                        int verbose, CONF *lconf, X509_REQ *req, char *ext_sect,
-                       int ext_copy, int selfsign);
+                       int ext_copy, int selfsign, int precert);
 
 /*
  * Signs the certificate using the given key.
@@ -263,7 +264,7 @@ typedef enum OPTION_choice {
     OPT_INFILES, OPT_SS_CERT, OPT_SPKAC, OPT_REVOKE, OPT_VALID,
     OPT_EXTENSIONS, OPT_EXTFILE, OPT_STATUS, OPT_UPDATEDB, OPT_CRLEXTS,
     OPT_CRL_REASON, OPT_CRL_HOLD, OPT_CRL_COMPROMISE,
-    OPT_CRL_CA_COMPROMISE
+    OPT_CRL_CA_COMPROMISE, OPT_PRECERT
 } OPTION_CHOICE;
 
 OPTIONS ca_options[] = {
@@ -310,6 +311,7 @@ OPTIONS ca_options[] = {
      "File contains DN and signed public key and challenge"},
     {"revoke", OPT_REVOKE, '<', "Revoke a cert (given in file)"},
     {"valid", OPT_VALID, 's'},
+    {"precert", OPT_PRECERT, '-', "Issue a pre-certificate, rather than cert"},
     {"extensions", OPT_EXTENSIONS, 's',
      "Extension section (override value in config file)"},
     {"extfile", OPT_EXTFILE, '<',
@@ -362,6 +364,7 @@ int ca_main(int argc, char **argv)
     int batch = 0, default_op = 1, doupdatedb = 0, ext_copy = EXT_COPY_NONE;
     int keyformat = FORMAT_PEM, multirdn = 0, notext = 0, output_der = 0;
     int ret = 1, email_dn = 1, req = 0, verbose = 0, gencrl = 0, dorevoke = 0;
+    int precert = 0;
     int i, j, rev_type = REV_NONE, selfsign = 0;
     long crldays = 0, crlhours = 0, crlsec = 0, days = 0;
     unsigned long chtype = MBSTRING_ASC, nameopt = 0, certopt = 0;
@@ -470,6 +473,9 @@ opthelp:
             break;
         case OPT_NOEMAILDN:
             email_dn = 0;
+            break;
+        case OPT_PRECERT:
+            precert = 1;
             break;
         case OPT_GENCRL:
             gencrl = 1;
@@ -1047,7 +1053,8 @@ end_of_options:
             j = certify(&x, infile, pkey, x509p, dgst, sigopts, attribs, db,
                         serial, subj, chtype, multirdn, email_dn, startdate,
                         enddate, days, batch, extensions, conf, verbose,
-                        certopt, nameopt, default_op, ext_copy, selfsign);
+                        certopt, nameopt, default_op, ext_copy, selfsign,
+                        precert);
             if (j < 0)
                 goto end;
             if (j > 0) {
@@ -1066,7 +1073,8 @@ end_of_options:
             j = certify(&x, argv[i], pkey, x509p, dgst, sigopts, attribs, db,
                         serial, subj, chtype, multirdn, email_dn, startdate,
                         enddate, days, batch, extensions, conf, verbose,
-                        certopt, nameopt, default_op, ext_copy, selfsign);
+                        certopt, nameopt, default_op, ext_copy, selfsign,
+                        precert);
             if (j < 0)
                 goto end;
             if (j > 0) {
@@ -1105,14 +1113,16 @@ end_of_options:
                 }
             }
 
-            BIO_printf(bio_err, "Write out database with %d new entries\n",
-                       sk_X509_num(cert_sk));
+            if (!precert) {
+                BIO_printf(bio_err, "Write out database with %d new entries\n",
+                           sk_X509_num(cert_sk));
 
-            if (!save_serial(serialfile, "new", serial, NULL))
-                goto end;
+                if (!save_serial(serialfile, "new", serial, NULL))
+                    goto end;
 
-            if (!save_index(dbfile, "new", db))
-                goto end;
+                if (!save_index(dbfile, "new", db))
+                    goto end;
+            }
         }
 
         if (verbose)
@@ -1169,7 +1179,7 @@ end_of_options:
             write_new_certificate(Sout, x, output_der, notext);
         }
 
-        if (sk_X509_num(cert_sk)) {
+        if (!precert && sk_X509_num(cert_sk)) {
             /* Rename the database and the serial file */
             if (!rotate_serial(serialfile, "new", "old"))
                 goto end;
@@ -1388,7 +1398,7 @@ static int certify(X509 **xret, char *infile, EVP_PKEY *pkey, X509 *x509,
                    int multirdn, int email_dn, char *startdate, char *enddate,
                    long days, int batch, char *ext_sect, CONF *lconf,
                    int verbose, unsigned long certopt, unsigned long nameopt,
-                   int default_op, int ext_copy, int selfsign)
+                   int default_op, int ext_copy, int selfsign, int precert)
 {
     X509_REQ *req = NULL;
     BIO *in = NULL;
@@ -1440,7 +1450,7 @@ static int certify(X509 **xret, char *infile, EVP_PKEY *pkey, X509 *x509,
     ok = do_body(xret, pkey, x509, dgst, sigopts, policy, db, serial, subj,
                  chtype, multirdn, email_dn, startdate, enddate, days, batch,
                  verbose, req, ext_sect, lconf, certopt, nameopt, default_op,
-                 ext_copy, selfsign);
+                 ext_copy, selfsign, precert);
 
  end:
     X509_REQ_free(req);
@@ -1492,7 +1502,7 @@ static int certify_cert(X509 **xret, char *infile, EVP_PKEY *pkey, X509 *x509,
     ok = do_body(xret, pkey, x509, dgst, sigopts, policy, db, serial, subj,
                  chtype, multirdn, email_dn, startdate, enddate, days, batch,
                  verbose, rreq, ext_sect, lconf, certopt, nameopt, default_op,
-                 ext_copy, 0);
+                 ext_copy, 0, 0);
 
  end:
     X509_REQ_free(rreq);
@@ -1507,7 +1517,7 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
                    int email_dn, char *startdate, char *enddate, long days,
                    int batch, int verbose, X509_REQ *req, char *ext_sect,
                    CONF *lconf, unsigned long certopt, unsigned long nameopt,
-                   int default_op, int ext_copy, int selfsign)
+                   int default_op, int ext_copy, int selfsign, int precert)
 {
     int ok = 0;
     X509_NAME *name, *CAname, *subject;
@@ -1551,7 +1561,8 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
                    "Everything appears to be ok, creating the certificate\n");
 
     if (!create_cert(xret, x509, serial, email_dn, subject, startdate, enddate,
-                     days, verbose, lconf, req, ext_sect, ext_copy, selfsign)),
+                     days, verbose, lconf, req, ext_sect, ext_copy, selfsign,
+                     precert))
         goto end;
     if (!sign_cert(*xret, pkey, dgst, sigopts, certopt, nameopt, default_op, days, batch))
         goto end;
@@ -1964,6 +1975,13 @@ static int create_cert(X509 **xret, X509 *x509, BIGNUM *serial, int email_dn,
         goto end;
     }
 
+    /* If precert then we need to add the poison extension */
+    if (precert && !add_precert_poison(ret)) {
+        BIO_printf(bio_err, "ERROR: adding poison extension to precert\n");
+        ERR_print_errors(bio_err);
+        goto end;
+    }
+
     /* Set the right value for the noemailDN option */
     if (!email_dn) {
         int success;
@@ -2220,7 +2238,7 @@ static int certify_spkac(X509 **xret, char *infile, EVP_PKEY *pkey,
     ok = do_body(xret, pkey, x509, dgst, sigopts, policy, db, serial, subj,
                  chtype, multirdn, email_dn, startdate, enddate, days, 1,
                  verbose, req, ext_sect, lconf, certopt, nameopt, default_op,
-                 ext_copy, 0);
+                 ext_copy, 0, 0);
  end:
     X509_REQ_free(req);
     CONF_free(parms);

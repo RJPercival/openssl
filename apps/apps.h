@@ -500,6 +500,19 @@ __owur int ctx_set_verify_locations(SSL_CTX *ctx, const char *CAfile,
  */
 __owur int ctx_set_ctlog_list_file(SSL_CTX *ctx, const char *path);
 
+/*
+ * Adds a poison extension (see RFC 6962) to the given certificate.
+ * If the certificate already has a poison extension, does nothing.
+ * Returns 1 on success, 0 otherwise.
+ */
+__owur int add_precert_poison(X509 *cert);
+
+/*
+ * Removes the poison extension from the given pre-certificate.
+ * Returns 1 on success, 0 otherwise.
+ */
+__owur int remove_precert_poison(X509 *cert);
+
 #endif
 
 # ifdef OPENSSL_NO_ENGINE

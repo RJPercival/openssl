@@ -246,6 +246,33 @@ int ctx_set_ctlog_list_file(SSL_CTX *ctx, const char *path)
     return SSL_CTX_set_ctlog_list_file(ctx, path);
 }
 
+int add_precert_poison(X509 *cert)
+{
+    int poison_index = X509_get_ext_by_NID(cert, NID_ct_precert_poison, -1);
+
+    /* If the cert already has poison extension, no further action is needed */
+    if (poison_index >= 0)
+        return 1;
+
+    if (X509_add1_ext_i2d(cert, NID_ct_precert_poison, NULL, 1, 0) <= 0)
+        return 0;
+
+    return 1;
+}
+
+int remove_precert_poison(X509 *cert)
+{
+    int poison_index = X509_get_ext_by_NID(cert, NID_ct_precert_poison, -1);
+    X509_EXTENSION *poison;
+
+    if (poison_index < 0)
+        return 0;
+
+    poison = X509_delete_ext(cert, poison_index);
+    X509_EXTENSION_free(poison);
+    return 1;
+}
+
 #endif
 
 int dump_cert_text(BIO *out, X509 *x)
