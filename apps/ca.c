@@ -181,6 +181,71 @@ char *make_revocation_str(int rev_type, char *rev_arg);
 int make_revoked(X509_REVOKED *rev, const char *str);
 static int old_entry_print(ASN1_OBJECT *obj, ASN1_STRING *str);
 
+/*
+ * Sets the subject name in the certificate request, based on subj, chtype and
+ * multirdn.
+ * Returns 1 on success, 0 otherwise.
+ */
+static int set_subject_name(X509_REQ *req, const char *subj,
+                            unsigned long chtype, int multirdn);
+
+/*
+ * Prints a subject name.
+ * If !default_op, just checks that the name is printable.
+ * If !email_dn, no email address will be printed.
+ * Returns 1 on success, 0 otherwise.
+ */
+static int print_subject_name(X509_NAME *name, int email_dn, int default_op);
+
+/*
+ * Returns a copy of a name, but with the email address removed.
+ * Returns NULL on error.
+ */
+static X509_NAME *remove_email_address(X509_NAME *subject);
+
+/*
+ * Applies the given policy to a subject name.
+ * Returns a copy of the name with the entries in the same order as the policy.
+ */
+static X509_NAME *apply_subject_name_policy(X509_NAME *name, X509_NAME* CAname,
+                                            STACK_OF(CONF_VALUE) *policy);
+
+/*
+ * Checks whether there is already a certificate in the database with this
+ * serial number.
+ * Returns 1 if no such certificate was found, 0 otherwise.
+ * Returns -1 if an error occurs.
+ */
+static int check_for_dup(CA_DB *db, BIGNUM *serial);
+
+/*
+ * Creates a new certificate.
+ * *xret will point to the new certificate if successful.
+ * If verbose, logging will be printed.
+ * If selfsign, the certificate will be self-signed.
+ * Returns 1 on success, 0 otherwise.
+ */
+static int create_cert(X509 **xret, X509 *issuer, BIGNUM *serial, int email_dn,
+                       X509_NAME *subject,
+                       const char *startdate, const char *enddate, long days,
+                       int verbose, CONF *lconf, X509_REQ *req, char *ext_sect,
+                       int ext_copy, int selfsign);
+
+/*
+ * Signs the certificate using the given key.
+ * Returns 1 on success, 0 otherwise.
+ */
+static int sign_cert(X509 *ret, EVP_PKEY *pkey, const EVP_MD *dgst,
+                     STACK_OF(OPENSSL_STRING) *sigopts, unsigned long certopt,
+                     unsigned long nameopt, int default_op, long days,
+                     int batch);
+
+/*
+ * Adds a certificate to the database.
+ * Returns 1 on success, 0 otherwise.
+ */
+static int add_to_database(CA_DB *db, X509 *cert, BIGNUM *serial);
+
 static CONF *conf = NULL;
 static CONF *extconf = NULL;
 static char *section = NULL;
@@ -1444,56 +1509,92 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
                    CONF *lconf, unsigned long certopt, unsigned long nameopt,
                    int default_op, int ext_copy, int selfsign)
 {
-    X509_NAME *name = NULL, *CAname = NULL, *subject = NULL, *dn_subject =
-        NULL;
-    ASN1_UTCTIME *tm, *tmptm;
-    ASN1_STRING *str, *str2;
-    ASN1_OBJECT *obj;
-    X509 *ret = NULL;
-    X509_NAME_ENTRY *ne;
-    X509_NAME_ENTRY *tne, *push;
-    EVP_PKEY *pktmp;
-    int ok = -1, i, j, last, nid;
-    const char *p;
-    CONF_VALUE *cv;
-    OPENSSL_STRING row[DB_NUMBER];
-    OPENSSL_STRING *irow = NULL;
-    OPENSSL_STRING *rrow = NULL;
-    char buf[25];
+    int ok = 0;
+    X509_NAME *name, *CAname, *subject;
 
-    tmptm = ASN1_UTCTIME_new();
-    if (tmptm == NULL) {
-        BIO_printf(bio_err, "malloc error\n");
-        return (0);
-    }
-
-    for (i = 0; i < DB_NUMBER; i++)
-        row[i] = NULL;
-
-    if (subj) {
-        X509_NAME *n = parse_name(subj, chtype, multirdn);
-
-        if (!n) {
-            ERR_print_errors(bio_err);
+    if (subj != NULL)
+        if (!set_subject_name(req, subj, chtype, multirdn))
             goto end;
-        }
-        X509_REQ_set_subject_name(req, n);
-        X509_NAME_free(n);
+
+    name = X509_REQ_get_subject_name(req);
+    if (name == NULL)
+        goto end;
+
+    if (!print_subject_name(name, email_dn, default_op))
+        goto end;
+
+    if (selfsign)
+        CAname = name;
+    else
+        CAname = X509_get_subject_name(x509);
+
+    subject = apply_subject_name_policy(name, CAname, policy);
+    if (subject == NULL)
+        goto end;
+
+    if (preserve) {
+        X509_NAME_free(subject);
+        subject = name;
     }
+
+    if (verbose)
+        BIO_printf(bio_err,
+                   "The subject name appears to be ok, checking data base for clashes\n");
+
+    ok = check_for_dup(db, serial);
+    if (ok <= 0)
+        goto end;
+
+    /* We are now totally happy, lets make the certificate */
+    if (verbose)
+        BIO_printf(bio_err,
+                   "Everything appears to be ok, creating the certificate\n");
+
+    if (!create_cert(xret, x509, serial, email_dn, subject, startdate, enddate,
+                     days, verbose, lconf, req, ext_sect, ext_copy, selfsign)),
+        goto end;
+    if (!sign_cert(*xret, pkey, dgst, sigopts, certopt, nameopt, default_op, days, batch))
+        goto end;
+    if (!add_to_database(db, *xret, serial))
+        goto end;
+    ok = 1;
+end:
+    if (subject != name)
+        X509_NAME_free(subject);
+
+    return ok;
+}
+
+static int set_subject_name(X509_REQ *req, const char *subj,
+                            unsigned long chtype, int multirdn)
+{
+    X509_NAME *n = parse_name(subj, chtype, multirdn);
+
+    if (!n) {
+        ERR_print_errors(bio_err);
+        return 0;
+    }
+    X509_REQ_set_subject_name(req, n);
+    X509_NAME_free(n);
+    return 1;
+}
+
+static int print_subject_name(X509_NAME *name, int email_dn, int default_op)
+{
+    int i;
 
     if (default_op)
         BIO_printf(bio_err,
                    "The Subject's Distinguished Name is as follows\n");
 
-    name = X509_REQ_get_subject_name(req);
     for (i = 0; i < X509_NAME_entry_count(name); i++) {
-        ne = X509_NAME_get_entry(name, i);
-        str = X509_NAME_ENTRY_get_data(ne);
-        obj = X509_NAME_ENTRY_get_object(ne);
+        X509_NAME_ENTRY *ne = X509_NAME_get_entry(name, i);
+        ASN1_STRING *str = X509_NAME_ENTRY_get_data(ne);
+        ASN1_OBJECT *obj = X509_NAME_ENTRY_get_object(ne);
 
         if (msie_hack) {
             /* assume all type should be strings */
-            nid = OBJ_obj2nid(X509_NAME_ENTRY_get_object(ne));
+            int nid = OBJ_obj2nid(X509_NAME_ENTRY_get_object(ne));
 
             if (str->type == V_ASN1_UNIVERSALSTRING)
                 ASN1_UNIVERSALSTRING_to_string(str);
@@ -1516,18 +1617,18 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
             (str->type != V_ASN1_IA5STRING)) {
             BIO_printf(bio_err,
                        "\nemailAddress type needs to be of type IA5STRING\n");
-            goto end;
+            return 0;
         }
-        if ((str->type != V_ASN1_BMPSTRING)
-            && (str->type != V_ASN1_UTF8STRING)) {
-            j = ASN1_PRINTABLE_type(str->data, str->length);
+        if ((str->type != V_ASN1_BMPSTRING) && (str->type != V_ASN1_UTF8STRING)) {
+            int j = ASN1_PRINTABLE_type(str->data, str->length);
+
             if (((j == V_ASN1_T61STRING) &&
                  (str->type != V_ASN1_T61STRING)) ||
                 ((j == V_ASN1_IA5STRING) &&
                  (str->type == V_ASN1_PRINTABLESTRING))) {
                 BIO_printf(bio_err,
                            "\nThe string contains characters that are illegal for the ASN.1 type\n");
-                goto end;
+                return 0;
             }
         }
 
@@ -1535,46 +1636,49 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
             old_entry_print(obj, str);
     }
 
-    /* Ok, now we check the 'policy' stuff. */
-    if ((subject = X509_NAME_new()) == NULL) {
+    return 1;
+}
+
+static X509_NAME *apply_subject_name_policy(X509_NAME *name, X509_NAME* CAname,
+                                            STACK_OF(CONF_VALUE) *policy)
+{
+    int i, j;
+    X509_NAME *subject = X509_NAME_new();
+
+    if (subject == NULL) {
         BIO_printf(bio_err, "Memory allocation failure\n");
-        goto end;
+        goto err;
     }
 
-    /* take a copy of the issuer name before we mess with it. */
-    if (selfsign)
-        CAname = X509_NAME_dup(name);
-    else
-        CAname = X509_NAME_dup(X509_get_subject_name(x509));
-    if (CAname == NULL)
-        goto end;
-    str = str2 = NULL;
-
+    /* Ok, now we check the 'policy' stuff. */
     for (i = 0; i < sk_CONF_VALUE_num(policy); i++) {
-        cv = sk_CONF_VALUE_value(policy, i); /* get the object id */
-        if ((j = OBJ_txt2nid(cv->name)) == NID_undef) {
+        int last = -1;
+        CONF_VALUE *cv = sk_CONF_VALUE_value(policy, i); /* get the object id */
+        ASN1_OBJECT *obj = OBJ_txt2obj(cv->name, 0);
+
+        if (obj == NULL) {
             BIO_printf(bio_err,
                        "%s:unknown object type in 'policy' configuration\n",
                        cv->name);
-            goto end;
+            goto err;
         }
-        obj = OBJ_nid2obj(j);
 
-        last = -1;
-        for (;;) {
+        do {
+            X509_NAME_ENTRY *tne = NULL;
+            X509_NAME_ENTRY *push = NULL;
+
             /* lookup the object in the supplied name list */
             j = X509_NAME_get_index_by_OBJ(name, obj, last);
+
             if (j < 0) {
                 if (last != -1)
                     break;
-                tne = NULL;
             } else {
                 tne = X509_NAME_get_entry(name, j);
             }
             last = j;
 
             /* depending on the 'policy', decide what to do. */
-            push = NULL;
             if (strcmp(cv->value, "optional") == 0) {
                 if (tne != NULL)
                     push = tne;
@@ -1583,116 +1687,108 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
                     BIO_printf(bio_err,
                                "The %s field needed to be supplied and was missing\n",
                                cv->name);
-                    goto end;
-                } else
-                    push = tne;
+                    goto err;
+                }
+                push = tne;
             } else if (strcmp(cv->value, "match") == 0) {
-                int last2;
+                int last2 = -1;
+                ASN1_STRING *str, *str2;
 
                 if (tne == NULL) {
                     BIO_printf(bio_err,
                                "The mandatory %s field was missing\n",
                                cv->name);
-                    goto end;
+                    goto err;
                 }
 
-                last2 = -1;
+                do {
+                    int j2 = X509_NAME_get_index_by_OBJ(CAname, obj, last2);
+                    if (j2 < 0) {
+                        if (last2 == -1) {
+                            BIO_printf(bio_err,
+                                       "The %s field does not exist in the CA certificate,\nthe 'policy' is misconfigured\n",
+                                       cv->name);
+                        } else {
+                            BIO_printf(bio_err,
+                                       "The %s field needed to be the same in the\nCA certificate (%s) and the request (%s)\n",
+                                       cv->name,
+                                       ((str2 == NULL) ? "NULL" : (char *)str2->data),
+                                       ((str == NULL) ? "NULL" : (char *)str->data));
+                        }
+                        goto err;
+                    }
 
- again2:
-                j = X509_NAME_get_index_by_OBJ(CAname, obj, last2);
-                if ((j < 0) && (last2 == -1)) {
-                    BIO_printf(bio_err,
-                               "The %s field does not exist in the CA certificate,\nthe 'policy' is misconfigured\n",
-                               cv->name);
-                    goto end;
-                }
-                if (j >= 0) {
-                    push = X509_NAME_get_entry(CAname, j);
+                    push = X509_NAME_get_entry(CAname, j2);
                     str = X509_NAME_ENTRY_get_data(tne);
                     str2 = X509_NAME_ENTRY_get_data(push);
-                    last2 = j;
-                    if (ASN1_STRING_cmp(str, str2) != 0)
-                        goto again2;
-                }
-                if (j < 0) {
-                    BIO_printf(bio_err,
-                               "The %s field needed to be the same in the\nCA certificate (%s) and the request (%s)\n",
-                               cv->name,
-                               ((str2 == NULL) ? "NULL" : (char *)str2->data),
-                               ((str == NULL) ? "NULL" : (char *)str->data));
-                    goto end;
-                }
+                    last2 = j2;
+                } while (ASN1_STRING_cmp(str, str2) != 0);
             } else {
                 BIO_printf(bio_err,
                            "%s:invalid type in 'policy' configuration\n",
                            cv->value);
-                goto end;
+                goto err;
             }
 
             if (push != NULL) {
                 if (!X509_NAME_add_entry(subject, push, -1, 0)) {
-                    X509_NAME_ENTRY_free(push);
                     BIO_printf(bio_err, "Memory allocation failure\n");
-                    goto end;
+                    goto err;
                 }
             }
-            if (j < 0)
-                break;
-        }
+        } while (j >= 0);
     }
 
-    if (preserve) {
-        X509_NAME_free(subject);
-        /* subject=X509_NAME_dup(X509_REQ_get_subject_name(req)); */
-        subject = X509_NAME_dup(name);
-        if (subject == NULL)
-            goto end;
-    }
+    return subject;
+err:
+    X509_NAME_free(subject);
+    return NULL;
+}
 
-    if (verbose)
-        BIO_printf(bio_err,
-                   "The subject name appears to be ok, checking data base for clashes\n");
+static X509_NAME *remove_email_address(X509_NAME *subject)
+{
+    X509_NAME *ret = X509_NAME_dup(subject);
+    int i;
 
-    /* Build the correct Subject if no e-mail is wanted in the subject */
     /*
-     * and add it later on because of the method extensions are added
-     * (altName)
+     * Its best to dup the subject DN and then delete any email addresses
+     * because this retains its structure.
      */
-
-    if (email_dn)
-        dn_subject = subject;
-    else {
-        X509_NAME_ENTRY *tmpne;
-        /*
-         * Its best to dup the subject DN and then delete any email addresses
-         * because this retains its structure.
-         */
-        if ((dn_subject = X509_NAME_dup(subject)) == NULL) {
-            BIO_printf(bio_err, "Memory allocation failure\n");
-            goto end;
-        }
-        while ((i = X509_NAME_get_index_by_NID(dn_subject,
-                                               NID_pkcs9_emailAddress,
-                                               -1)) >= 0) {
-            tmpne = X509_NAME_get_entry(dn_subject, i);
-            X509_NAME_delete_entry(dn_subject, i);
-            X509_NAME_ENTRY_free(tmpne);
-        }
+    if (ret == NULL) {
+        BIO_printf(bio_err, "Memory allocation failure\n");
+        return NULL;
     }
+
+    while ((i = X509_NAME_get_index_by_NID(ret, NID_pkcs9_emailAddress, -1)) >= 0) {
+        X509_NAME_ENTRY *tmpne = X509_NAME_get_entry(ret, i);
+        X509_NAME_delete_entry(ret, i);
+        X509_NAME_ENTRY_free(tmpne);
+    }
+
+    return ret;
+}
+
+static int check_for_dup(CA_DB *db, BIGNUM *serial)
+{
+    int ok = 0, i;
+    OPENSSL_STRING row[DB_NUMBER];
+    OPENSSL_STRING *rrow = NULL;
+
+    for (i = 0; i < DB_NUMBER; i++)
+        row[i] = NULL;
 
     if (BN_is_zero(serial))
         row[DB_serial] = OPENSSL_strdup("00");
     else
         row[DB_serial] = BN_bn2hex(serial);
+
     if (row[DB_serial] == NULL) {
         BIO_printf(bio_err, "Memory allocation failure\n");
         goto end;
     }
 
     if (db->attributes.unique_subject) {
-        OPENSSL_STRING *crow = row;
-
-        rrow = TXT_DB_get_by_index(db->db, DB_name, crow);
+        rrow = TXT_DB_get_by_index(db->db, DB_name, row);
         if (rrow != NULL) {
             BIO_printf(bio_err,
                        "ERROR:There is already a certificate for %s\n",
@@ -1711,6 +1807,8 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
     }
 
     if (rrow != NULL) {
+        OPENSSL_CSTRING p;
+
         BIO_printf(bio_err, "The matching entry has the following details\n");
         if (rrow[DB_type][0] == 'E')
             p = "Expired";
@@ -1747,10 +1845,23 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
         goto end;
     }
 
-    /* We are now totally happy, lets make and sign the certificate */
-    if (verbose)
-        BIO_printf(bio_err,
-                   "Everything appears to be ok, creating and signing the certificate\n");
+    ok = 1;
+ end:
+    for (i = 0; i < DB_NUMBER; i++)
+        OPENSSL_free(row[i]);
+
+    return ok;
+}
+
+static int create_cert(X509 **xret, X509 *x509, BIGNUM *serial, int email_dn,
+                       X509_NAME *subject,
+                       const char *startdate, const char *enddate, long days,
+                       int verbose, CONF *lconf, X509_REQ *req, char *ext_sect,
+                       int ext_copy, int selfsign, int precert)
+{
+    X509 *ret;
+    EVP_PKEY *pktmp;
+    int ok = 0, i;
 
     if ((ret = X509_new()) == NULL)
         goto end;
@@ -1763,6 +1874,7 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
 
     if (BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(ret)) == NULL)
         goto end;
+
     if (selfsign) {
         if (!X509_set_issuer_name(ret, subject))
             goto end;
@@ -1780,6 +1892,7 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
         X509_time_adj_ex(X509_get_notAfter(ret), days, 0, NULL);
     else {
         int tdays;
+
         ASN1_TIME_set_string(X509_get_notAfter(ret), enddate);
         ASN1_TIME_diff(&tdays, NULL, NULL, X509_get_notAfter(ret));
         days = tdays;
@@ -1845,7 +1958,6 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
     }
 
     /* Copy extensions from request (if any) */
-
     if (!copy_extensions(ret, req, ext_copy)) {
         BIO_printf(bio_err, "ERROR: adding extensions from request\n");
         ERR_print_errors(bio_err);
@@ -1853,10 +1965,36 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
     }
 
     /* Set the right value for the noemailDN option */
-    if (email_dn == 0) {
-        if (!X509_set_subject_name(ret, dn_subject))
+    if (!email_dn) {
+        int success;
+        X509_NAME *dn_subject = remove_email_address(subject);
+
+        if (dn_subject == NULL)
+            goto end;
+
+        success = X509_set_subject_name(ret, dn_subject);
+        X509_NAME_free(dn_subject);
+        if (!success)
             goto end;
     }
+
+    ok = 1;
+ end:
+    if (ok <= 0)
+        X509_free(ret);
+    else
+        *xret = ret;
+    return ok;
+}
+
+static int sign_cert(X509 *ret, EVP_PKEY *pkey, const EVP_MD *dgst,
+                     STACK_OF(OPENSSL_STRING) *sigopts, unsigned long certopt,
+                     unsigned long nameopt, int default_op, long days,
+                     int batch)
+{
+    int ok = 0;
+    char buf[25];
+    EVP_PKEY *pktmp;
 
     if (!default_op) {
         BIO_printf(bio_err, "Certificate Details:\n");
@@ -1874,19 +2012,16 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
     BIO_printf(bio_err, "\n");
 
     if (!batch) {
-
         BIO_printf(bio_err, "Sign the certificate? [y/n]:");
         (void)BIO_flush(bio_err);
         buf[0] = '\0';
         if (!fgets(buf, sizeof(buf) - 1, stdin)) {
             BIO_printf(bio_err,
                        "CERTIFICATE WILL NOT BE CERTIFIED: I/O error\n");
-            ok = 0;
             goto end;
         }
         if (!((buf[0] == 'y') || (buf[0] == 'Y'))) {
             BIO_printf(bio_err, "CERTIFICATE WILL NOT BE CERTIFIED\n");
-            ok = 0;
             goto end;
         }
     }
@@ -1899,9 +2034,20 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
     if (!do_X509_sign(ret, pkey, dgst, sigopts))
         goto end;
 
-    /* We now just add it to the database */
+    ok = 1;
+ end:
+    return ok;
+}
+
+static int add_to_database(CA_DB *db, X509 *ret, BIGNUM *serial)
+{
+    int ok = 0, i;
+    ASN1_UTCTIME *tm = X509_get_notAfter(ret);
+    OPENSSL_STRING *irow;
+    OPENSSL_STRING row[DB_NUMBER];
+
+    row[DB_serial] = BN_bn2hex(serial);
     row[DB_type] = OPENSSL_strdup("V");
-    tm = X509_get_notAfter(ret);
     row[DB_exp_date] = app_malloc(tm->length + 1, "row expdate");
     memcpy(row[DB_exp_date], tm->data, tm->length);
     row[DB_exp_date][tm->length] = '\0';
@@ -1928,20 +2074,11 @@ static int do_body(X509 **xret, EVP_PKEY *pkey, X509 *x509,
         goto end;
     }
     ok = 1;
- end:
+end:
     for (i = 0; i < DB_NUMBER; i++)
         OPENSSL_free(row[i]);
 
-    X509_NAME_free(CAname);
-    X509_NAME_free(subject);
-    if (dn_subject != subject)
-        X509_NAME_free(dn_subject);
-    ASN1_UTCTIME_free(tmptm);
-    if (ok <= 0)
-        X509_free(ret);
-    else
-        *xret = ret;
-    return (ok);
+    return ok;
 }
 
 static void write_new_certificate(BIO *bp, X509 *x, int output_der,
