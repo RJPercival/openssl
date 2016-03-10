@@ -131,6 +131,9 @@
 # ifndef OPENSSL_SYS_NETWARE
 #  include <signal.h>
 # endif
+# ifndef OPENSSL_NO_CT
+#  include <openssl/ct.h>
+# endif
 
 # if defined(OPENSSL_SYS_WIN32) || defined(OPENSSL_SYS_WINCE)
 #  define openssl_fdset(a,b) FD_SET((unsigned int)a, b)
@@ -501,6 +504,15 @@ __owur int ctx_set_verify_locations(SSL_CTX *ctx, const char *CAfile,
 __owur int ctx_set_ctlog_list_file(SSL_CTX *ctx, const char *path);
 
 /*
+ * Loads SCTs from the a file.
+ * The only supported file format is FORMAT_PEM.
+ * The expected PEM header is "SIGNED CERTIFICATE TIMESTAMP".
+ * Each SCT should be in TLS wire format (see RFC 6962), base64-encoded.
+ * Returns 1 on success, 0 otherwise.
+ */
+__owur int load_scts(const char *file, STACK_OF(SCT) **scts, int format);
+
+/*
  * Adds a poison extension (see RFC 6962) to the given certificate.
  * If the certificate already has a poison extension, does nothing.
  * Returns 1 on success, 0 otherwise.
@@ -508,7 +520,7 @@ __owur int ctx_set_ctlog_list_file(SSL_CTX *ctx, const char *path);
 __owur int add_precert_poison(X509 *cert);
 
 /*
- * Removes the poison extension from the given pre-certificate.
+ * Removes a poison extension (see RFC 6962) from the given pre-certificate.
  * Returns 1 on success, 0 otherwise.
  */
 __owur int remove_precert_poison(X509 *cert);

@@ -246,6 +246,64 @@ int ctx_set_ctlog_list_file(SSL_CTX *ctx, const char *path)
     return SSL_CTX_set_ctlog_list_file(ctx, path);
 }
 
+int load_scts(const char *file, STACK_OF(SCT) **scts, int format)
+{
+    static const char *sct_pem_header = "SIGNED CERTIFICATE TIMESTAMP";
+    int ret = 0;
+    BIO *in = NULL;
+    char *name = NULL;
+    char *header = NULL;
+    unsigned char *data = NULL;
+    long data_len;
+
+    if (format != FORMAT_PEM) {
+        BIO_printf(bio_err, "bad input format specified for SCTs\n");
+        goto end;
+    }
+
+    in = bio_open_default(file, 'r', format);
+    if (in == NULL)
+        goto end;
+
+    if (scts != NULL && *scts == NULL) {
+        *scts = sk_SCT_new_null();
+        if (*scts == NULL)
+            goto end;
+    }
+
+    while (PEM_read_bio(in, &name, &header, &data, &data_len)) {
+        if (strcmp(name, sct_pem_header) == 0) {
+            const unsigned char *p = data;
+            SCT *sct = o2i_SCT(NULL, (const unsigned char **)&p, data_len);
+
+            if (sct == NULL)
+                goto end;
+
+            if (scts != NULL)
+                sk_SCT_push(*scts, sct);
+            else
+                SCT_free(sct);
+        }
+
+        OPENSSL_free(name);
+        OPENSSL_free(header);
+        OPENSSL_free(data);
+    }
+
+ end:
+    BIO_free_all(in);
+    OPENSSL_free(name);
+    OPENSSL_free(header);
+    OPENSSL_free(data);
+
+    if (ret == 0 && scts != NULL) {
+        SCT_LIST_free(*scts);
+        *scts = NULL;
+    }
+
+    return ret;
+}
+
 int add_precert_poison(X509 *cert)
 {
     int poison_index = X509_get_ext_by_NID(cert, NID_ct_precert_poison, -1);

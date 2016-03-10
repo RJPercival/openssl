@@ -73,6 +73,9 @@
 #include <openssl/objects.h>
 #include <openssl/ocsp.h>
 #include <openssl/pem.h>
+#ifndef OPENSSL_NO_CT
+# include <openssl/ct.h>
+#endif
 
 #ifndef W_OK
 # ifdef OPENSSL_SYS_VMS
@@ -153,7 +156,13 @@ static int certify_cert(X509 **xret, char *infile, EVP_PKEY *pkey, X509 *x509,
                         int multirdn, int email_dn, char *startdate,
                         char *enddate, long days, int batch, char *ext_sect,
                         CONF *conf, int verbose, unsigned long certopt,
-                        unsigned long nameopt, int default_op, int ext_copy);
+                        unsigned long nameopt, int default_op, int ext_copy,
+#ifndef OPENSSL_NO_CT
+                        STACK_OF(SCT) *scts
+#else
+                        void
+#endif
+                        );
 static int certify_spkac(X509 **xret, char *infile, EVP_PKEY *pkey,
                          X509 *x509, const EVP_MD *dgst,
                          STACK_OF(OPENSSL_STRING) *sigopts,
@@ -247,6 +256,23 @@ static int sign_cert(X509 *ret, EVP_PKEY *pkey, const EVP_MD *dgst,
  */
 static int add_to_database(CA_DB *db, X509 *cert, BIGNUM *serial);
 
+#ifndef OPENSSL_NO_CT
+
+/*
+ * Converts a pre-certificate into a certificate.
+ * Removes the poison extension and adds an SCT extension.
+ * Returns 1 on success, 0 otherwise.
+ */
+static int convert_precert_into_cert(X509 *cert, STACK_OF(SCT) *scts);
+
+/*
+ * Embeds some SCTs into a certificate using an extension.
+ * Returns 1 on success, 0 otherwise.
+ */
+static int add_sct_extension(X509 *ret, STACK_OF(SCT) *scts);
+
+#endif
+
 static CONF *conf = NULL;
 static CONF *extconf = NULL;
 static char *section = NULL;
@@ -264,7 +290,7 @@ typedef enum OPTION_choice {
     OPT_INFILES, OPT_SS_CERT, OPT_SPKAC, OPT_REVOKE, OPT_VALID,
     OPT_EXTENSIONS, OPT_EXTFILE, OPT_STATUS, OPT_UPDATEDB, OPT_CRLEXTS,
     OPT_CRL_REASON, OPT_CRL_HOLD, OPT_CRL_COMPROMISE,
-    OPT_CRL_CA_COMPROMISE, OPT_PRECERT
+    OPT_CRL_CA_COMPROMISE, OPT_PRECERT, OPT_SCTS
 } OPTION_CHOICE;
 
 OPTIONS ca_options[] = {
@@ -312,6 +338,8 @@ OPTIONS ca_options[] = {
     {"revoke", OPT_REVOKE, '<', "Revoke a cert (given in file)"},
     {"valid", OPT_VALID, 's'},
     {"precert", OPT_PRECERT, '-', "Issue a pre-certificate, rather than cert"},
+    {"sctsfile", OPT_SCTS, '<',
+        "File containing SCTs to embed (PEM format). Input must be a pre-cert"},
     {"extensions", OPT_EXTENSIONS, 's',
      "Extension section (override value in config file)"},
     {"extfile", OPT_EXTFILE, '<',
@@ -351,7 +379,8 @@ int ca_main(int argc, char **argv)
     char *configfile = default_config_file;
     char *md = NULL, *policy = NULL, *keyfile = NULL;
     char *certfile = NULL, *crl_ext = NULL, *crlnumberfile = NULL;
-    char *infile = NULL, *spkac_file = NULL, *ss_cert_file = NULL;
+    char *infile = NULL, *spkac_file = NULL, *ss_cert_file = NULL,
+         *scts_file = NULL;
     char *extensions = NULL, *extfile = NULL, *key = NULL, *passinarg = NULL;
     char *outdir = NULL, *outfile = NULL, *rev_arg = NULL, *ser_status = NULL;
     char *serialfile = NULL, *startdate = NULL, *subj = NULL;
@@ -370,6 +399,9 @@ int ca_main(int argc, char **argv)
     unsigned long chtype = MBSTRING_ASC, nameopt = 0, certopt = 0;
     X509 *x509 = NULL, *x509p = NULL, *x = NULL;
     X509_REVOKED *r = NULL;
+#ifndef OPENSSL_NO_CT
+    STACK_OF(SCT) *scts = NULL;
+#endif
     OPTION_CHOICE o;
 
     conf = NULL;
@@ -445,6 +477,9 @@ opthelp:
             break;
         case OPT_KEY:
             key = opt_arg();
+            break;
+        case OPT_SCTS:
+            scts_file = opt_arg();
             break;
         case OPT_CERT:
             certfile = opt_arg();
@@ -893,6 +928,19 @@ end_of_options:
     }
 
     if (req) {
+        if (scts_file != NULL) {
+#ifndef OPENSSL_NO_CT
+            if (!load_scts(scts_file, &scts, FORMAT_PEM)) {
+                BIO_printf(bio_err, "Could not load SCTS: %s\n", scts_file);
+                ERR_print_errors(bio_err);
+                goto end;
+            }
+#else
+            BIO_printf(bio_err, "OpenSSL was not compiled with Certificate "
+                       "Transparency support.\n");
+            goto end;
+#endif
+        }
         if ((email_dn == 1) && ((tmp_email_dn = NCONF_get_string(conf,
                                                                  section,
                                                                  ENV_DEFAULT_EMAIL_DN))
@@ -1034,7 +1082,13 @@ end_of_options:
                              db, serial, subj, chtype, multirdn, email_dn,
                              startdate, enddate, days, batch, extensions,
                              conf, verbose, certopt, nameopt, default_op,
-                             ext_copy);
+                             ext_copy,
+#ifndef OPENSSL_NO_CT
+                             scts
+#else
+                             void
+#endif
+                             );
             if (j < 0)
                 goto end;
             if (j > 0) {
@@ -1050,11 +1104,22 @@ end_of_options:
         }
         if (infile != NULL) {
             total++;
-            j = certify(&x, infile, pkey, x509p, dgst, sigopts, attribs, db,
-                        serial, subj, chtype, multirdn, email_dn, startdate,
-                        enddate, days, batch, extensions, conf, verbose,
-                        certopt, nameopt, default_op, ext_copy, selfsign,
-                        precert);
+#ifndef OPENSSL_NO_CT
+            if (scts != NULL) {
+                j = certify_cert(&x, infile, pkey, x509p, dgst, sigopts, attribs, db,
+                            serial, subj, chtype, multirdn, email_dn, startdate,
+                            enddate, days, batch, extensions, conf, verbose,
+                            certopt, nameopt, default_op, ext_copy, scts);
+            } else {
+#else
+            if (1) {
+#endif
+                j = certify(&x, infile, pkey, x509p, dgst, sigopts, attribs, db,
+                            serial, subj, chtype, multirdn, email_dn, startdate,
+                            enddate, days, batch, extensions, conf, verbose,
+                            certopt, nameopt, default_op, ext_copy, selfsign, precert);
+            }
+
             if (j < 0)
                 goto end;
             if (j > 0) {
@@ -1070,11 +1135,22 @@ end_of_options:
         }
         for (i = 0; i < argc; i++) {
             total++;
-            j = certify(&x, argv[i], pkey, x509p, dgst, sigopts, attribs, db,
-                        serial, subj, chtype, multirdn, email_dn, startdate,
-                        enddate, days, batch, extensions, conf, verbose,
-                        certopt, nameopt, default_op, ext_copy, selfsign,
-                        precert);
+#ifndef OPENSSL_NO_CT
+            if (scts != NULL) {
+                j = certify_cert(&x, argv[i], pkey, x509p, dgst, sigopts, attribs, db,
+                            serial, subj, chtype, multirdn, email_dn, startdate,
+                            enddate, days, batch, extensions, conf, verbose,
+                            certopt, nameopt, default_op, ext_copy, scts);
+            } else {
+#else
+            if (1) {
+#endif
+                j = certify(&x, argv[i], pkey, x509p, dgst, sigopts, attribs, db,
+                            serial, subj, chtype, multirdn, email_dn, startdate,
+                            enddate, days, batch, extensions, conf, verbose,
+                            certopt, nameopt, default_op, ext_copy, selfsign, precert);
+            }
+
             if (j < 0)
                 goto end;
             if (j > 0) {
@@ -1367,6 +1443,9 @@ end_of_options:
     BIO_free_all(out);
     BIO_free_all(in);
     sk_X509_pop_free(cert_sk, X509_free);
+#ifndef OPENSSL_NO_CT
+    SCT_LIST_free(scts);
+#endif
 
     if (ret)
         ERR_print_errors(bio_err);
@@ -1465,7 +1544,13 @@ static int certify_cert(X509 **xret, char *infile, EVP_PKEY *pkey, X509 *x509,
                         int multirdn, int email_dn, char *startdate,
                         char *enddate, long days, int batch, char *ext_sect,
                         CONF *lconf, int verbose, unsigned long certopt,
-                        unsigned long nameopt, int default_op, int ext_copy)
+                        unsigned long nameopt, int default_op, int ext_copy,
+#ifndef OPENSSL_NO_CT
+                        STACK_OF(SCT) *scts
+#else
+                        void
+#endif
+                        )
 {
     X509 *req = NULL;
     X509_REQ *rreq = NULL;
@@ -1499,11 +1584,29 @@ static int certify_cert(X509 **xret, char *infile, EVP_PKEY *pkey, X509 *x509,
     if ((rreq = X509_to_X509_REQ(req, NULL, NULL)) == NULL)
         goto end;
 
-    ok = do_body(xret, pkey, x509, dgst, sigopts, policy, db, serial, subj,
-                 chtype, multirdn, email_dn, startdate, enddate, days, batch,
-                 verbose, rreq, ext_sect, lconf, certopt, nameopt, default_op,
-                 ext_copy, 0, 0);
+#ifndef OPENSSL_NO_CT
+    if (scts != NULL) {
+        ok = check_for_dup(db, serial);
+        if (ok <= 0)
+            goto end;
 
+        /* Convert req into the output cert, rather than creating a new cert */
+        if (!convert_precert_into_cert(req, scts))
+            goto end;
+        if (!sign_cert(req, pkey, dgst, sigopts, certopt, nameopt, default_op, days, batch))
+            goto end;
+        if (!add_to_database(db, *xret, serial))
+            goto end;
+        *xret = req;
+        X509_REQ_free(rreq);
+        return 1;
+    }
+#endif
+
+    ok = do_body(xret, pkey, x509, dgst, sigopts, policy, db, serial, subj,
+                 chtype, multirdn, email_dn, startdate, enddate, days,
+                 batch, verbose, rreq, ext_sect, lconf, certopt, nameopt,
+                 default_op, ext_copy, 0, 0);
  end:
     X509_REQ_free(rreq);
     X509_free(req);
@@ -2098,6 +2201,32 @@ end:
 
     return ok;
 }
+
+#ifndef OPENSSL_NO_CT
+
+static int add_sct_extension(X509 *cert, STACK_OF(SCT) *scts)
+{
+    if (X509_add1_ext_i2d(cert, NID_ct_precert_scts, scts, 0, 1) != 1) {
+        BIO_puts(bio_err, "ERROR: adding SCT extension to certificate\n");
+        ERR_print_errors(bio_err);
+        return 0;
+    }
+
+    /* TODO(robpercival): Do we need cert->cert_info.enc.modified to be set now? */
+    return 1;
+}
+
+static int convert_precert_into_cert(X509 *cert, STACK_OF(SCT) *scts)
+{
+    if (!remove_precert_poison(cert))
+        return 0;
+    if (!add_sct_extension(cert, scts))
+        return 0;
+
+    return 1;
+}
+
+#endif
 
 static void write_new_certificate(BIO *bp, X509 *x, int output_der,
                                   int notext)
