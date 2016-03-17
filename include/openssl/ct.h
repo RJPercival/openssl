@@ -324,13 +324,6 @@ void SCT_LIST_print(const STACK_OF(SCT) *sct_list, BIO *out, int indent,
 __owur int SCT_verify(const SCT_CTX *sctx, const SCT *sct);
 
 /*
- * Verifies an SCT against the provided data.
- * Returns 1 if the SCT verifies successfully, 0 otherwise.
- */
-__owur int SCT_verify_v1(SCT *sct, X509 *cert, X509 *preissuer,
-                  X509_PUBKEY *log_pubkey, X509 *issuer_cert);
-
-/*
  * Gets the last result of validating this SCT.
  * If it has not been validated yet, returns SCT_VALIDATION_STATUS_NOT_SET.
  */

@@ -243,38 +243,3 @@ end:
     return ret;
 }
 
-int SCT_verify_v1(SCT *sct, X509 *cert, X509 *preissuer,
-                  X509_PUBKEY *log_pubkey, X509 *issuer_cert)
-{
-    int ret = 0;
-    SCT_CTX *sctx = NULL;
-
-    if (!SCT_is_complete(sct)) {
-        CTerr(CT_F_SCT_VERIFY_V1, CT_R_SCT_NOT_SET);
-        return 0;
-    }
-
-    if (sct->version != 0) {
-        CTerr(CT_F_SCT_VERIFY_V1, CT_R_SCT_UNSUPPORTED_VERSION);
-        return 0;
-    }
-
-    sctx = SCT_CTX_new();
-    if (sctx == NULL)
-        goto done;
-
-    if (!SCT_CTX_set1_pubkey(sctx, log_pubkey))
-        goto done;
-
-    if (!SCT_CTX_set1_cert(sctx, cert, preissuer))
-        goto done;
-
-    if (sct->entry_type == CT_LOG_ENTRY_TYPE_PRECERT &&
-        !SCT_CTX_set1_issuer(sctx, issuer_cert))
-        goto done;
-
-    ret = SCT_verify(sctx, sct);
-done:
-    SCT_CTX_free(sctx);
-    return ret;
-}

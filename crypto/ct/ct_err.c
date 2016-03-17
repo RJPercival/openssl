@@ -116,7 +116,6 @@ static ERR_STRING_DATA CT_str_functs[] = {
     {ERR_FUNC(CT_F_SCT_SIGNATURE_IS_VALID), "SCT_SIGNATURE_IS_VALID"},
     {ERR_FUNC(CT_F_SCT_VALIDATE), "SCT_validate"},
     {ERR_FUNC(CT_F_SCT_VERIFY), "SCT_verify"},
-    {ERR_FUNC(CT_F_SCT_VERIFY_V1), "SCT_verify_v1"},
     {0, NULL}
 };
 
