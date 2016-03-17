@@ -375,6 +375,8 @@ int SCT_validate(SCT *sct, const CT_POLICY_EVAL_CTX *ctx)
     if (SCT_CTX_set1_cert(sctx, ctx->cert, NULL) != 1)
         goto err;
 
+    SCT_CTX_set_time(sctx, ctx->time);
+
     sct->validation_status = SCT_verify(sctx, sct) == 1 ?
             SCT_VALIDATION_STATUS_VALID : SCT_VALIDATION_STATUS_INVALID;
 

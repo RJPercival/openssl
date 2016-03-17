@@ -145,6 +145,8 @@ struct sct_ctx_st {
     /* pre-certificate encoding */
     unsigned char *preder;
     size_t prederlen;
+    /* current time */
+    long time;
 };
 
 /* Context when evaluating whether a Certificate Transparency policy is met */
@@ -152,6 +154,7 @@ struct ct_policy_eval_ctx_st {
     X509 *cert;
     X509 *issuer;
     CTLOG_STORE *log_store;
+    long time; /* current time */
 };
 
 /*
@@ -196,6 +199,12 @@ __owur int SCT_CTX_set1_issuer_pubkey(SCT_CTX *sctx, X509_PUBKEY *pubkey);
  * Returns 1 on success, 0 on failure.
  */
 __owur int SCT_CTX_set1_pubkey(SCT_CTX *sctx, X509_PUBKEY *pubkey);
+
+/*
+ * Sets the current time.
+ * This is used to determine whether an SCT's timestamp is in the future.
+ */
+void SCT_CTX_set_time(SCT_CTX *sctx, long time);
 
 /*
  * Does this SCT have the minimum fields populated to be usable?

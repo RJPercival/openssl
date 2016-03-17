@@ -93,6 +93,11 @@ void CT_POLICY_EVAL_CTX_set0_log_store(CT_POLICY_EVAL_CTX *ctx,
     ctx->log_store = log_store;
 }
 
+void CT_POLICY_EVAL_CTX_set_time(CT_POLICY_EVAL_CTX *ctx, long time)
+{
+    ctx->time = time;
+}
+
 X509* CT_POLICY_EVAL_CTX_get0_cert(const CT_POLICY_EVAL_CTX *ctx)
 {
     return ctx->cert;
@@ -108,3 +113,7 @@ const CTLOG_STORE *CT_POLICY_EVAL_CTX_get0_log_store(const CT_POLICY_EVAL_CTX *c
     return ctx->log_store;
 }
 
+long CT_POLICY_EVAL_CTX_get_time(const CT_POLICY_EVAL_CTX *ctx)
+{
+    return ctx->time;
+}

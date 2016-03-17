@@ -131,6 +131,12 @@ const CTLOG_STORE *CT_POLICY_EVAL_CTX_get0_log_store(const CT_POLICY_EVAL_CTX *c
 void CT_POLICY_EVAL_CTX_set0_log_store(CT_POLICY_EVAL_CTX *ctx,
                                        CTLOG_STORE *log_store);
 
+/* Gets the current time, in seconds since the epoch */
+long CT_POLICY_EVAL_CTX_get_time(const CT_POLICY_EVAL_CTX *ctx);
+
+/* Sets the current time, in seconds since the epoch */
+void CT_POLICY_EVAL_CTX_set_time(CT_POLICY_EVAL_CTX *ctx, long time);
+
 /*
  * A callback for verifying that the received SCTs are sufficient.
  * Expected to return 1 if they are sufficient, otherwise 0.

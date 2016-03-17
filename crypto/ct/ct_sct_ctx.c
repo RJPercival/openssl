@@ -305,3 +305,8 @@ int SCT_CTX_set1_pubkey(SCT_CTX *sctx, X509_PUBKEY *pubkey)
     sctx->pkey = pkey;
     return 1;
 }
+
+void SCT_CTX_set_time(SCT_CTX *sctx, long time)
+{
+    sctx->time = time;
+}

@@ -4129,6 +4129,7 @@ int ssl_validate_ct(SSL *s)
     CT_POLICY_EVAL_CTX_set0_cert(ctx, cert);
     CT_POLICY_EVAL_CTX_set0_issuer(ctx, issuer);
     CT_POLICY_EVAL_CTX_set0_log_store(ctx, s->ctx->ctlog_store);
+    CT_POLICY_EVAL_CTX_set_time(ctx, SSL_SESSION_get_time(s->session));
 
     scts = SSL_get0_peer_scts(s);
 
