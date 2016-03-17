@@ -588,6 +588,7 @@ void ERR_load_CT_strings(void);
 # define CT_R_SCT_LIST_INVALID                            105
 # define CT_R_SCT_LOG_ID_MISMATCH                         114
 # define CT_R_SCT_NOT_SET                                 106
+# define CT_R_SCT_TIMESTAMP_IN_FUTURE                     118
 # define CT_R_SCT_UNSUPPORTED_VERSION                     115
 # define CT_R_SCT_VALIDATION_STATUS_NOT_SET               117
 # define CT_R_UNRECOGNIZED_SIGNATURE_NID                  101
