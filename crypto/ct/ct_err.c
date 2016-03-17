@@ -134,6 +134,7 @@ static ERR_STRING_DATA CT_str_reasons[] = {
     {ERR_REASON(CT_R_SCT_LIST_INVALID), "sct list invalid"},
     {ERR_REASON(CT_R_SCT_LOG_ID_MISMATCH), "sct log id mismatch"},
     {ERR_REASON(CT_R_SCT_NOT_SET), "sct not set"},
+    {ERR_REASON(CT_R_SCT_TIMESTAMP_IN_FUTURE), "sct timestamp in future"},
     {ERR_REASON(CT_R_SCT_UNSUPPORTED_VERSION), "sct unsupported version"},
     {ERR_REASON(CT_R_SCT_VALIDATION_STATUS_NOT_SET),
      "sct validation status not set"},

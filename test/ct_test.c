@@ -94,7 +94,10 @@ typedef struct ct_test_fixture {
     const char *sct_text_file;
     /* Whether to test the validity of the SCT(s) */
     int test_validity;
-
+    /* Whether the SCT(s) are expected to be valid */
+    int expect_validity;
+    /* The "current" time in seconds since the epoch */
+    long time;
 } CT_TEST_FIXTURE;
 
 static CT_TEST_FIXTURE set_up(const char *const test_case_name)
@@ -292,6 +295,7 @@ static int execute_cert_test(CT_TEST_FIXTURE fixture)
     }
 
     CT_POLICY_EVAL_CTX_set0_log_store(ct_policy_ctx, fixture.ctlog_store);
+    CT_POLICY_EVAL_CTX_set_time(ct_policy_ctx, fixture.time);
 
     if (fixture.certificate_file != NULL) {
         int sct_extension_index;
@@ -358,7 +362,7 @@ static int execute_cert_test(CT_TEST_FIXTURE fixture)
                 if (are_scts_validated < 0) {
                     fprintf(stderr, "Error verifying SCTs\n");
                     test_failed = 1;
-                } else if (!are_scts_validated) {
+                } else if (are_scts_validated != fixture.expect_validity) {
                     int invalid_sct_count = 0;
                     int valid_sct_count = 0;
 
@@ -383,11 +387,10 @@ static int execute_cert_test(CT_TEST_FIXTURE fixture)
 
                         fprintf(stderr,
                                 "%d SCTs failed verification\n"
-                                "%d SCTs passed verification (%d expected)\n"
+                                "%d SCTs passed verification\n"
                                 "%d SCTs were unverified\n",
                                 invalid_sct_count,
                                 valid_sct_count,
-                                fixture.expected_sct_count,
                                 unverified_sct_count);
                     }
                     test_failed = 1;
@@ -433,9 +436,10 @@ static int execute_cert_test(CT_TEST_FIXTURE fixture)
                 test_failed = 1;
                 fprintf(stderr, "Error validating SCT\n");
                 goto end;
-            } else if (!is_sct_validated) {
+            } else if (is_sct_validated != fixture.expect_validity) {
                 test_failed = 1;
-                fprintf(stderr, "SCT failed verification\n");
+                fprintf(stderr, "SCT validated = %d, expected = %d\n",
+                        is_sct_validated, fixture.expect_validity);
                 goto end;
             }
         }
@@ -495,7 +499,8 @@ static int test_verify_one_sct()
     fixture.certificate_file = "embeddedSCTs1.pem";
     fixture.issuer_file = "embeddedSCTs1_issuer.pem";
     fixture.expected_sct_count = 1;
-    fixture.test_validity = 1;
+    fixture.test_validity = fixture.expect_validity = 1;
+    fixture.time = 1458248676;
     EXECUTE_CT_TEST();
 }
 
@@ -506,7 +511,21 @@ static int test_verify_multiple_scts()
     fixture.certificate_file = "embeddedSCTs3.pem";
     fixture.issuer_file = "embeddedSCTs3_issuer.pem";
     fixture.expected_sct_count = 3;
+    fixture.test_validity = fixture.expect_validity = 1;
+    fixture.time = 1458248676;
+    EXECUTE_CT_TEST();
+}
+
+static int test_future_sct_is_invalid()
+{
+    SETUP_CT_TEST_FIXTURE();
+    fixture.certs_dir = certs_dir;
+    fixture.certificate_file = "embeddedSCTs1.pem";
+    fixture.issuer_file = "embeddedSCTs1_issuer.pem";
+    fixture.expected_sct_count = 1;
     fixture.test_validity = 1;
+    fixture.expect_validity = 0;
+    fixture.time = 1; /* "current" year is 1970 */
     EXECUTE_CT_TEST();
 }
 
@@ -589,6 +608,7 @@ int main(int argc, char *argv[])
     ADD_TEST(test_multiple_scts_in_certificate);
     ADD_TEST(test_verify_one_sct);
     ADD_TEST(test_verify_multiple_scts);
+    ADD_TEST(test_future_sct_is_invalid);
     ADD_TEST(test_decode_tls_sct);
     ADD_TEST(test_encode_tls_sct);
 

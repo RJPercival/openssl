@@ -221,6 +221,10 @@ int SCT_verify(const SCT_CTX *sctx, const SCT *sct)
         CTerr(CT_F_SCT_VERIFY, CT_R_SCT_LOG_ID_MISMATCH);
         return 0;
     }
+    if (sct->timestamp > (uint64_t)sctx->time * 1000u) {
+        CTerr(CT_F_SCT_VERIFY, CT_R_SCT_TIMESTAMP_IN_FUTURE);
+        return 0;
+    }
 
     ctx = EVP_MD_CTX_new();
     if (ctx == NULL)
