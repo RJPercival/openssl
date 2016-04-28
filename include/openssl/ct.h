@@ -365,21 +365,18 @@ sct_validation_status_t SCT_get_validation_status(const SCT *sct);
 
 /*
  * Validates the given SCT with the provided context.
- * Sets the "validation_status" field of the SCT.
- * Returns 1 if the SCT is valid and the signature verifies.
- * Returns 0 if the SCT is invalid or could not be verified.
- * Returns -1 if an error occurs.
+ * Returns 1 if the SCT's validation_status property was updated successfully.
+ * Returns 0 if an error occurred.
  */
-int SCT_validate(SCT *sct, const CT_POLICY_EVAL_CTX *ctx);
+int SCT_update_validation_status(SCT *sct, const CT_POLICY_EVAL_CTX *ctx);
 
 /*
  * Validates the given list of SCTs with the provided context.
- * Populates the "good_scts" and "bad_scts" of the evaluation context.
- * Returns 1 if there are no invalid SCTs and all signatures verify.
- * Returns 0 if at least one SCT is invalid or could not be verified.
- * Returns a negative integer if an error occurs.
+ * Returns 1 if all SCT validation_status properties were updated successfully.
+ * Returns 0 if an error occurs.
  */
-int SCT_LIST_validate(const STACK_OF(SCT) *scts, CT_POLICY_EVAL_CTX *ctx);
+int SCT_LIST_update_validation_status(const STACK_OF(SCT) *scts,
+                                      CT_POLICY_EVAL_CTX *ctx);
 
 
 /*********************************

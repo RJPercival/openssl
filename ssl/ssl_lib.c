@@ -4063,7 +4063,7 @@ int SSL_validate_ct(SSL *s)
 
     scts = SSL_get0_peer_scts(s);
 
-    if (SCT_LIST_validate(scts, ctx) != 1) {
+    if (!SCT_LIST_update_validation_status(scts, ctx)) {
         SSLerr(SSL_F_SSL_VALIDATE_CT, SSL_R_SCT_VERIFICATION_FAILED);
         goto end;
     }

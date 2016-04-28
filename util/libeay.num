@@ -4768,7 +4768,7 @@ CTLOG_STORE_new                         5271	1_1_0	EXIST::FUNCTION:
 SCT_LIST_set_source                     5272	1_1_0	EXIST::FUNCTION:
 CT_POLICY_EVAL_CTX_set0_log_store       5273	1_1_0	EXIST::FUNCTION:
 CTLOG_new_from_base64                   5274	1_1_0	EXIST::FUNCTION:
-SCT_LIST_validate                       5275	1_1_0	EXIST::FUNCTION:
+SCT_LIST_validate                       5275	1_1_0	NOEXIST::FUNCTION:
 CT_POLICY_EVAL_CTX_get0_issuer          5276	1_1_0	EXIST::FUNCTION:
 CT_POLICY_EVAL_CTX_free                 5277	1_1_0	EXIST::FUNCTION:
 CTLOG_free                              5278	1_1_0	EXIST::FUNCTION:
@@ -4791,5 +4791,5 @@ CTLOG_get0_log_id                       5294	1_1_0	EXIST::FUNCTION:
 SCT_get0_log_name                       5295	1_1_0	EXIST::FUNCTION:
 CT_POLICY_EVAL_CTX_get0_cert            5296	1_1_0	EXIST::FUNCTION:
 CTLOG_STORE_free                        5297	1_1_0	EXIST::FUNCTION:
-SCT_validate                            5298	1_1_0	EXIST::FUNCTION:
+SCT_validate                            5298	1_1_0	NOEXIST::FUNCTION:
 CT_X509_set0_ctlog_store                5299	1_1_0	EXIST::FUNCTION:

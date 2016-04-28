@@ -363,16 +363,11 @@ sct_validation_status_t SCT_get_validation_status(const SCT *sct)
     return sct->validation_status;
 }
 
-int SCT_validate(SCT *sct, const CT_POLICY_EVAL_CTX *ctx)
+int SCT_update_validation_status(SCT *sct, const CT_POLICY_EVAL_CTX *ctx)
 {
-    int is_sct_valid = -1;
+    int ret = 0;
     SCT_CTX *sctx = NULL;
     X509_PUBKEY *pub = NULL, *log_pkey = NULL;
-
-    if (sct == NULL || ctx == NULL) {
-        CTerr(CT_F_SCT_VALIDATE, ERR_R_PASSED_NULL_PARAMETER);
-        goto err;
-    }
 
     switch (sct->version) {
     case SCT_VERSION_V1:
@@ -392,7 +387,7 @@ int SCT_validate(SCT *sct, const CT_POLICY_EVAL_CTX *ctx)
     }
 
     sctx = SCT_CTX_new();
-    if (!sctx)
+    if (sctx == NULL)
         goto err;
 
     if (X509_PUBKEY_set(&log_pkey, CTLOG_get0_public_key(sct->log)) != 1)
@@ -421,36 +416,25 @@ int SCT_validate(SCT *sct, const CT_POLICY_EVAL_CTX *ctx)
             SCT_VALIDATION_STATUS_VALID : SCT_VALIDATION_STATUS_INVALID;
 
 end:
-    is_sct_valid = sct->validation_status == SCT_VALIDATION_STATUS_VALID;
+    ret = 1;
 err:
     X509_PUBKEY_free(pub);
     X509_PUBKEY_free(log_pkey);
     SCT_CTX_free(sctx);
-
-    return is_sct_valid;
+    return ret;
 }
 
-int SCT_LIST_validate(const STACK_OF(SCT) *scts, CT_POLICY_EVAL_CTX *ctx)
+int SCT_LIST_update_validation_status(const STACK_OF(SCT) *scts, CT_POLICY_EVAL_CTX *ctx)
 {
-    int are_scts_valid = 1;
     int sct_count = scts != NULL ? sk_SCT_num(scts) : 0;
     int i;
-    if (ctx == NULL) {
-        CTerr(CT_F_SCT_LIST_VALIDATE, ERR_R_PASSED_NULL_PARAMETER);
-        return -1;
-    }
 
     for (i = 0; i < sct_count; ++i) {
-        int is_sct_valid = -1;
         SCT *sct = sk_SCT_value(scts, i);
-        if (sct == NULL)
-            continue;
 
-        is_sct_valid = SCT_validate(sct, ctx);
-        if (is_sct_valid < 0)
-            return is_sct_valid;
-        are_scts_valid &= is_sct_valid;
+        if (sct != NULL && !SCT_update_validation_status(sct, ctx))
+            return 0;
     }
 
-    return are_scts_valid;
+    return 1;
 }
